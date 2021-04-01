@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+  
+  <head>
+    <meta charset="utf-8" />
+    <style type="text/css">
+      body{background-color:#CCCCCC;}
+    </style>
+    <title>mbc: Code Printer</title>
+  </head>
+  
+  <body>
+    <input type="textbox" id="comment">Comment
+    </input>
+    <br />
+    <input type="textbox" id="switchvalue">Switch Value
+    </input>
+    <br />
+    <input type="checkbox" id="0" checked="checked">0 (Root)
+    </input>
+    <br />
+    <input type="checkbox" id="1">1 (Minor 2nd)
+    </input>
+    <br />
+    <input type="checkbox" id="2">2 (Major 2nd)
+    </input>
+    <br />
+    <input type="checkbox" id="3">3 (Minor 3rd)
+    </input>
+    <br />
+    <input type="checkbox" id="4">4 (Major 3rd)
+    </input>
+    <br />
+    <input type="checkbox" id="5">5 (Perfect 4th)
+    </input>
+    <br />
+    <input type="checkbox" id="6">6
+    </input>
+    <br />
+    <input type="checkbox" id="7">7 (Perfect 5th)
+    </input>
+    <br />
+    <input type="checkbox" id="8">8 (Minor 6th)
+    </input>
+    <br />
+    <input type="checkbox" id="9">9 (Major 6th)
+    </input>
+    <br />
+    <input type="checkbox" id="10">10 (Minor 7th)
+    </input>
+    <br />
+    <input type="checkbox" id="11">11 (Major 7th)
+    </input>
+    <br />
+    <button onclick="print_scale_code()">Print Code
+    </button>
+    <br />
+    <textarea id="codetextarea" rows="20" cols="150" readonly="readonly">Select which notes to use and click "Print Code"
+    </textarea>
+    <br />
+    
+    <script>    
+    
+    var note_names = new Array( "R", "m2", "M2", "m3", "M3", "P4", "", "P5", "m6", "M6", "m7", "M7" );
+    
+    function print_scale_code(){
+      
+      // WHEEL CODE
+      var cta = document.getElementById("codetextarea");
+      
+      cta.value = "******* WHEEL CODE *******\n\n" +
+      "      // " + document.getElementById("comment").value + "\n" +
+      "    case " + document.getElementById("switchvalue").value + ":\n";
+      
+      cta.value = cta.value + 
+      "      wheel_draw_note( (note_num" + ")\%notes_per_octave, true, \"R\" )\;\n";
+      
+      for( var i=1; i<12; i++ ){
+	if( document.getElementById(i).checked ){
+	  cta.value = cta.value + 
+	  "      wheel_draw_note( (note_num+" + i + ")\%notes_per_octave, true, \"" + note_names[i] + "\" )\;\n";
+	} // end if
+	else{
+	  cta.value = cta.value + 
+	  "      wheel_draw_note( (note_num+" + i + ")\%notes_per_octave, false, \"\" )\;\n";	    
+	} // end else
+      } // end for
+      
+      cta.value = cta.value + "      break;\n"
+      
+      
+      // PIANO CODE
+      cta.value = cta.value + 
+      "\n\n******* PIANO CODE *******\n\n" +
+      "      // " + document.getElementById("comment").value + "\n" +
+      "    case " + document.getElementById("switchvalue").value + ":\n" +
+      "      for( var i=0; i<2; i++ ){\n" +
+      "        piano_draw_note( (note_num)%notes_per_octave, i );\n";
+      
+      for( var i=1; i<12; i++ ){
+        if( document.getElementById(i).checked ){
+          cta.value = cta.value +
+          "        piano_draw_note( (note_num+" + i + ")%notes_per_octave, i );\n";
+        } // end if
+      } // end for
+      cta.value = cta.value + 
+      "      }\n" +
+      "      break;\n";
+      
+      
+      // STRINGED CODE
+      cta.value = cta.value + 
+      "\n\n******* STRINGED CODE *******\n\n" +
+      "      // " + document.getElementById("comment").value + "\n" +
+      "    case " + document.getElementById("switchvalue").value + ":\n" +
+      "      for( var i=1; i<=num_strings; i++ ){\n" +
+      "        if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }\n";  
+      
+      for( var i=1; i<12; i++ ){
+        if( document.getElementById(i).checked ){
+          cta.value = cta.value +
+          "        if( (note_num+" + i + ")%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+" + i + ")%notes_per_octave, i, num_octaves ); }\n";
+        } // end if
+      } // end for
+      
+      cta.value = cta.value + 
+      "        for( var j=0; j<num_octaves; j++ ){\n" +
+      "          stringed_draw_note( note_num, i, j );\n";
+      
+      for( var i=1; i<12; i++ ){
+        if( document.getElementById(i).checked ){
+          cta.value = cta.value +
+          "          stringed_draw_note( (note_num+" + i + ")%notes_per_octave, i, j );\n";
+        }// end if
+      } // end for
+      
+      cta.value = cta.value + 
+      "        } //end for octaves\n" +
+      "      } //end for strings\n" +
+      "      break;\n\n";
+          
+    } // end function
+    
+    </script>
+    
+  </body>
+  
+</html>

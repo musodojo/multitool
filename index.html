@@ -1,0 +1,1601 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <style type="text/css">
+    body{background-color:#000000;}
+  </style>
+  <title>MusoDOJO Multitool</title>
+</head>
+
+<body onload="scale_changed();stringed_instrument_changed()">  
+
+<p>
+  <select id="note_select" onchange="scale_changed()">
+    <option value="0" selected="selected">C</option>
+    <option value="1">C#/Db</option>
+    <option value="2">D</option>
+    <option value="3">D#/Eb</option>
+    <option value="4">E</option>
+    <option value="5">F</option>
+    <option value="6">F#/Gb</option>
+    <option value="7">G</option>
+    <option value="8">G#/Ab</option>
+    <option value="9">A</option>
+    <option value="10">A#/Bb</option>
+    <option value="11">B</option>
+  </select>
+  <select id="scale_select" onchange="scale_changed()">
+    <option value="0" selected="selected">Ionian/Major</option>
+    <option value="1">Dorian</option>
+    <option value="2">Phrygian</option>
+    <option value="3">Lydian</option>
+    <option value="4">Mixolydian</option>
+    <option value="5">Aeolian/Minor</option>
+    <option value="6">Locrian</option>
+    <option value="7">Melodic Minor (Ascending)</option>
+    <option value="8">Harmonic Minor</option>
+    <option value="9">Root</option>
+    <option value="10">Root and 5th</option>
+    <option value="11">Major Pentatonic</option>
+    <option value="12">Minor Pentatonic</option>
+    <option value="13">Chromatic</option>
+    <option value="14">Phrygian Dominant</option>
+    <option value="15">Major</option>
+    <option value="16">Major 6th</option>
+    <option value="17">Dominant 7th</option>
+    <option value="18">Major 7th</option>
+    <option value="19">Minor</option>
+    <option value="20">Minor 7th</option>
+  </select>
+</p>
+
+<canvas id="wheel" width="200" height="200">
+</canvas>
+<canvas id="piano" width="600" height="200">
+</canvas>
+<p>
+  <select id="stringed_instrument_select" onchange="stringed_instrument_changed()">
+    <option value="0" selected="selected">Guitar (EADGBE)</option>
+    <option value="1">Guitar (DADGAD)</option>
+    <option value="2">Guitar Open G (DGDGBD)</option>
+    <option value="3">Guitar Open D (DADF#AD)</option>
+    <option value="4">Bass (EADG)</option>
+    <option value="5">5-String Bass (BEADG)</option>
+    <option value="6">Violin (GDAE)</option>
+    <option value="7">Ukulele (GCEA)</option>
+  </select>
+</p>
+<canvas id="stringed" width="805" height="200">
+</canvas>
+
+<script type="text/javascript">
+
+// define the colors
+var note_colors = new Array("#ED2929","#9F000F","#78C7C7","#00008B","#FF9933","#EBEB19","#286704","#99CC33","#660099","#CC00FF","#BF6A1F","#FF9EE6");
+// note    note_num  note_color
+// --------------------------
+// C       0         light red
+// C#/Db   1         dark red
+// D       2         light blue
+// D#/Eb   3         dark blue
+// E       4         orange
+// F       5         yellow
+// F#/Gb   6         dark green
+// G       7         light green
+// G#/Ab   8         dark purple
+// A       9         light purple
+// A#/Bb  10         brown
+// B      11         pink
+
+var widget_bgcolor = "#FFFFFF";
+
+// begin set up stringed display
+var stringed_canvas = document.getElementById("stringed");
+var sc = stringed_canvas.getContext("2d");
+
+var fretboard_size = stringed_canvas.width*17/20;           // 17 twentieths of the width looks good
+var stringed_margin = stringed_canvas.width*0.04;
+
+// fret_overhang must be less than stringed_margin
+// it is how much the lines representing the frets go past the strings lines
+var fret_overhang = stringed_margin/3; 
+// set up some variables
+var note = 0;
+var scale = 0;
+var instrument = 0;
+var drawFrets = true;
+var notes_per_octave = 12;
+var num_octaves = 2;
+var num_strings = 6;
+// divide into (num_strings-1) widths plus one string width for locater dots along top of fretboard
+var string_offset = (stringed_canvas.height - 2*stringed_margin)/(num_strings); 
+
+// default = EBGDAE guitar... read open_notes array backwards though!
+var open_notes = new Array(4,11,7,2,9,4);
+
+var stringed_fret_xpos_reverse = new Array( (notes_per_octave*num_octaves)+1 );
+// fill stringed_fret_xpos_reverse with x positions of the frets (from body end continuing down the neck)
+// stringed_fret_xpos_reverse is a place-holder for the fret positions (in reverse order)
+for( var i=0; i<=(notes_per_octave*num_octaves); i++ ){
+  stringed_fret_xpos_reverse[i] = fretboard_size - fretboard_size*(Math.pow(2,i/(notes_per_octave*num_octaves)) - 1);
+}
+
+// fill x-axis note positions array - reverse order to fret_xpos_reverse (i.e. from head to body of instrument)
+// stringed_note_xpos contains the x-axis positions of the notes (i.e. where the dots should be drawn)
+var stringed_note_xpos = new Array( (notes_per_octave*num_octaves)+1 );
+for( var i=0; i<notes_per_octave*num_octaves; i++ ){
+  stringed_note_xpos[notes_per_octave*num_octaves-i] = stringed_fret_xpos_reverse[i] - ( (stringed_fret_xpos_reverse[i]-stringed_fret_xpos_reverse[i+1])/2 );
+}
+
+// stringed_dot_radius must be smaller than smallest fret width
+// AND it must be smaller than the distance between two strings (string_offset)
+// whichever one is smallest
+var smallest_fret_size = stringed_fret_xpos_reverse[0] - stringed_fret_xpos_reverse[1];
+var stringed_dot_radius = 0;
+if(smallest_fret_size < string_offset){
+  // divide by 2 is too big a circle
+  stringed_dot_radius = ( stringed_fret_xpos_reverse[0] - stringed_fret_xpos_reverse[1] ) / 3;
+}
+else{
+  stringed_dot_radius = ( string_offset ) / 3;              // divide by 2 is too big a circle
+}
+
+// custom set the 0th fret (open string) - must be within stringed_margin
+stringed_note_xpos[0] = -stringed_dot_radius - (stringed_dot_radius/2);
+
+// locater_dots_offset is for when two locater dots need to be drawn on the octaves
+var locater_dots_radius = stringed_dot_radius/1.5;
+var locater_dots_offset = locater_dots_radius;
+// end set up stringed display
+
+
+// begin set up piano display
+var piano_canvas = document.getElementById("piano");
+var pc = piano_canvas.getContext("2d");
+var piano_margin = piano_canvas.height*0.1;
+var wkey_width = (piano_canvas.width - 2*piano_margin)/14;  // needs 14 white key widths
+var wkey_height = piano_canvas.height - 2*piano_margin;;
+var bkey_width = wkey_width/2;
+var bkey_height = wkey_height*0.6;
+var piano_dot_radius = bkey_width*0.35;
+var piano_key_xpos = new Array();
+var tracker = 0;
+for( var i=0; i<24; i++ ){ 
+  if( i%12==5 || (i%12==0 && i!=0) ){ tracker++; }
+  piano_key_xpos[i] = (tracker+1)*(wkey_width/2); 
+  tracker++;
+}                                                           // end for
+// end set up piano display
+
+
+// begin set up wheel display
+var wheel_canvas = document.getElementById("wheel");
+var wc = wheel_canvas.getContext("2d");
+// end set up wheel display
+
+function scale_changed(){
+  
+  note = document.getElementById("note_select").selectedIndex;
+  scale = document.getElementById("scale_select").selectedIndex;
+  
+  wheel_draw_scale( note, scale );
+  piano_draw_scale( note, scale );
+  stringed_draw_scale( note, scale );
+  
+}
+
+
+//******************************************//
+//************** WHEEL CODE ****************//
+//******************************************//
+
+function wheel_draw_note( note_num, note_on, note_text ){
+  
+  wc.save();                                                // save the coordinate system to restore later
+  wc.translate( wheel_canvas.width/2, wheel_canvas.width/2 );
+  
+  wc.font = "bold 13px sans-serif";
+  wc.textAlign = "center";
+  wc.textBaseline = "middle";
+  wc.lineWidth = wheel_canvas.width/50;
+  
+  if( note_on ){
+    wc.beginPath();
+    wc.moveTo( 0, 0 );
+    wc.arc( 0,
+	    0,
+	    wheel_canvas.width/2*0.95,
+	    -Math.PI/2 + (note_num*Math.PI/6) + Math.PI/200,       // add pi/200 to look a little better
+	    -Math.PI/2 + ((note_num+1)*Math.PI/6) - Math.PI/200,   // and subtract pi/200 here
+	    false );
+    wc.closePath();
+    
+    wc.strokeStyle = "#000000"; 
+    wc.stroke();
+    
+    wc.fillStyle =  note_colors[note_num];
+    wc.fill();
+    
+    wc.fillStyle =  "#000000";
+    wc.fillText( note_text, 
+		 wheel_canvas.width/2*0.75*Math.cos(-Math.PI/2+(note_num+0.5)*Math.PI/6), 
+		 wheel_canvas.width/2*0.85*Math.sin(-Math.PI/2+(note_num+0.5)*Math.PI/6) );
+  }
+  else{
+    wc.beginPath();
+    wc.moveTo( 0, 0 );
+    wc.arc( 0,
+	    0,
+	    wheel_canvas.width/2.0*0.55,
+	    -Math.PI/2 + (note_num*Math.PI/6) + Math.PI/200,
+	    -Math.PI/2 + ((note_num+1)*Math.PI/6) - Math.PI/200,
+	    false );
+    wc.closePath();
+    wc.strokeStyle = "#000000";
+    wc.stroke();
+    wc.fillStyle =  note_colors[note_num];
+    wc.fill();
+  }
+  // restore the coordinate system
+  wc.restore();  
+  
+}
+
+function wheel_draw_scale( note_num, scale_num ){
+  
+  wheel_clear_notes();
+  
+  switch( scale_num ){
+    
+    // Ionian R-T-T-s-T-T-T-s
+    case 0:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "I" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, true, "ii" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, true, "iii" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, true, "IV" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "V" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, true, "vi" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, true, "vii0" );
+      break;
+      
+      // Dorian R-T-s-T-T-T-s-T
+    case 1:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "ii" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, true, "iii" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, true, "IV" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, true, "V" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "vi" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, true, "vii0" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, true, "I" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, false, "" );
+      break;
+      
+      // Phyrgian R-s-T-T-T-s-T-T
+    case 2:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "iii" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, true, "IV" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, true, "V" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, true, "vi" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "vii0" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, true, "I" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, true, "ii" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, false, "" );
+      break;
+      
+      // Lydian R-T-T-T-s-T-T-s
+    case 3:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "IV" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, true, "V" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, true, "vi" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, true, "vii0" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "I" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, true, "ii" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, true, "iii" );
+      break;
+      
+      // Mixolydian R-T-T-s-T-T-s-T
+    case 4:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "V" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, true, "vi" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, true, "vii0" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, true, "I" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "ii" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, true, "iii" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, true, "IV" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, false, "" );
+      break;
+      
+      //Aeolian R-T-s-T-T-s-T-T
+    case 5:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "vi" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, true, "vii0" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, true, "I" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, true, "ii" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "iii" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, true, "IV" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, true, "V" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, false, "" );
+      break;
+      
+      // Locrian R-s-T-T-s-T-T-T
+    case 6:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "vii0" );
+      wheel_draw_note( (note_num+1)%notes_per_octave,true, "I" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, true, "ii" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, true, "iii" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, true, "IV" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, true, "V" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, true, "vi" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, false, "" );
+      break;
+      
+      // Ascending Melodic Minor
+    case 7:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "R" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, true, "M2" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, true, "m3" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, true, "P4" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "P5" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, true, "M6" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, true, "M7" );
+      break;
+
+      // Harmonic Minor R-T-s-T-T-s-(T+s)-s
+    case 8:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "R" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, true, "M2" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, true, "m3" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, true, "P4" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "P5" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, true, "m6" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, true, "M7" );
+      break; 
+
+      // Just the root note
+    case 9:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "R" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, false, "" );
+      break;
+      
+      // Root and Fifth
+    case 10:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "R" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "P5" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, false, "" );
+      break;
+
+      // Major Pentatonic R-M2-M3-M5-M6
+    case 11:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "R" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, true, "M2" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, true, "M3" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "P5" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, true, "M6" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, false, "" );
+      break;
+      
+      // Minor Pentatonic R-m3-m4-m5-m7
+    case 12:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "R" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, true, "m3" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, true, "P4" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "P5" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, true, "m7" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, false, "" );
+      break;
+      
+      // Chromatic... all the notes!
+    case 13:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "R" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, true, "m2" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, true, "M2" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, true, "m3" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, true, "M3" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, true, "P4" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, true, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "P5" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, true, "m6" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, true, "M6" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, true, "m7" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, true, "M7" );
+      break;
+      
+      // Phyrgian Dominant R-s-(T+s)-T-T-s-T-T
+    case 14:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "R" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, true, "m2" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, true, "M3" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, true, "P4" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "P5" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, true, "m6" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, true, "m7" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, false, "" );
+      break;
+      
+      // Major Triad R-M3-M5
+    case 15:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "R" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, true, "M3" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "P5" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, false, "" );
+      break;
+      
+      // Major 6th
+    case 16:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "R" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, true, "M3" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "P5" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, true, "M6" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, false, "" );
+      break;
+      
+      // Dominant Seventh
+    case 17:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "R" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, true, "M3" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "P5" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, true, "m7" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, false, "" );
+      break;
+      
+      // Major Seventh Chord
+    case 18:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "R" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, true, "M3" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "P5" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, true, "M7" );
+      break;
+      
+      // Minor Triad
+    case 19:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "R" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, true, "m3" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "P5" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, false, "" );
+      break;
+      
+      // Minor/Minor Seventh Chord
+    case 20:
+      wheel_draw_note( (note_num)%notes_per_octave, true, "R" );
+      wheel_draw_note( (note_num+1)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+2)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+3)%notes_per_octave, true, "m3" );
+      wheel_draw_note( (note_num+4)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+5)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+6)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+7)%notes_per_octave, true, "P5" );
+      wheel_draw_note( (note_num+8)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+9)%notes_per_octave, false, "" );
+      wheel_draw_note( (note_num+10)%notes_per_octave, true, "m7" );
+      wheel_draw_note( (note_num+11)%notes_per_octave, false, "" );
+      break;
+      
+  }
+  
+  // a filled circle in the center 
+  wc.beginPath();
+  wc.arc( wheel_canvas.width/2,
+	  wheel_canvas.width/2,
+	  wheel_canvas.width/2*0.4,
+	  0,
+	  Math.PI*2.0,
+	  true );
+  wc.closePath();
+  wc.lineWidth = wheel_canvas.width/50;	
+  wc.stroke();
+  wc.fillStyle = note_colors[note_num]; 
+  wc.fill();
+  
+}
+
+function draw_wheel(){
+  wc.fillStyle = widget_bgcolor;
+  wc.beginPath();
+  wc.rect( 0, 0, wheel_canvas.width, wheel_canvas.height );
+  wc.closePath();
+  wc.fill();
+}
+
+function wheel_clear_notes(){
+  wheel_canvas.height = wheel_canvas.width;
+  draw_wheel();
+}
+
+
+//***************************************//
+//************* PIANO CODE **************//
+//***************************************//
+
+
+function draw_piano_keys(){
+  
+  pc.lineWidth = piano_dot_radius/1.5;
+  
+  pc.fillStyle = widget_bgcolor;
+  pc.beginPath();
+  pc.rect( 0, 0, piano_canvas.width, piano_canvas.height );
+  pc.closePath();
+  pc.fill();
+  
+  
+  // white keys
+  pc.beginPath();
+  for( var i=0; i<14; i++){
+    pc.rect( piano_margin+(i*wkey_width), piano_margin, wkey_width, wkey_height );
+  }
+  pc.closePath();
+  
+  pc.fillStyle = widget_bgcolor;
+  pc.fill();
+  pc.stroke();
+  
+  // black keys
+  pc.fillStyle = "#999999";
+  pc.beginPath();
+  for( var i=0; i<14; i++){
+    if( i%7==0 || i%7==1 || i%7==3 || i%7==4 || i%7==5 ){
+      pc.rect( piano_margin+((i+1)*wkey_width)-(bkey_width/2), piano_margin, bkey_width, bkey_height );
+    }
+  }
+  pc.closePath();
+  pc.stroke();
+  pc.fill();
+}
+
+
+function piano_draw_note( note_num, octave_num ){
+  pc.beginPath();
+  // draw black key dots higher than white key dots
+  if( note_num==1 || note_num==3 || note_num==6 || note_num==8 || note_num==10 ){
+    pc.arc( piano_margin+piano_key_xpos[note_num+octave_num*notes_per_octave], piano_margin+bkey_height*0.85, piano_dot_radius, 0, Math.PI*2, true );
+  }
+  else{
+    pc.arc( piano_margin+piano_key_xpos[note_num+octave_num*notes_per_octave], piano_margin+wkey_height*0.85, piano_dot_radius, 0, Math.PI*2, true );   
+  }
+  pc.closePath();
+  pc.stroke();
+  pc.fillStyle = note_colors[note_num];
+  pc.fill();
+}
+
+
+function piano_draw_scale( note_num, scale_num ){
+  
+  piano_clear_notes();
+  
+  switch( scale_num ){
+    
+    // Ionian R-T-T-s-T-T-T-s
+    case 0:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+	piano_draw_note( (note_num+2)%notes_per_octave, i );
+	piano_draw_note( (note_num+4)%notes_per_octave, i );
+	piano_draw_note( (note_num+5)%notes_per_octave, i );
+	piano_draw_note( (note_num+7)%notes_per_octave, i );
+	piano_draw_note( (note_num+9)%notes_per_octave, i );
+	piano_draw_note( (note_num+11)%notes_per_octave, i );
+      }
+      break;
+      
+      // Dorian R-T-s-T-T-T-s-T
+    case 1:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+	piano_draw_note( (note_num+2)%notes_per_octave, i );
+	piano_draw_note( (note_num+3)%notes_per_octave, i );
+	piano_draw_note( (note_num+5)%notes_per_octave, i );
+	piano_draw_note( (note_num+7)%notes_per_octave, i );
+	piano_draw_note( (note_num+9)%notes_per_octave, i );
+	piano_draw_note( (note_num+10)%notes_per_octave, i );
+      }
+      break;
+      
+      // Phyrgian R-s-T-T-T-s-T-T
+    case 2:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+	piano_draw_note( (note_num+1)%notes_per_octave, i );
+	piano_draw_note( (note_num+3)%notes_per_octave, i );
+	piano_draw_note( (note_num+5)%notes_per_octave, i );
+	piano_draw_note( (note_num+7)%notes_per_octave, i );
+	piano_draw_note( (note_num+8)%notes_per_octave, i );
+	piano_draw_note( (note_num+10)%notes_per_octave, i );
+      }
+      break;
+      
+      // Lydian R-T-T-T-s-T-T-s
+    case 3:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+	piano_draw_note( (note_num+2)%notes_per_octave, i );
+	piano_draw_note( (note_num+4)%notes_per_octave, i );
+	piano_draw_note( (note_num+6)%notes_per_octave, i );
+	piano_draw_note( (note_num+7)%notes_per_octave, i );
+	piano_draw_note( (note_num+9)%notes_per_octave, i );
+	piano_draw_note( (note_num+11)%notes_per_octave, i );
+      }
+      break;
+      
+      // Mixolydian R-T-T-s-T-T-s-T
+    case 4:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+	piano_draw_note( (note_num+2)%notes_per_octave, i );
+	piano_draw_note( (note_num+4)%notes_per_octave, i );
+	piano_draw_note( (note_num+5)%notes_per_octave, i );
+	piano_draw_note( (note_num+7)%notes_per_octave, i );
+	piano_draw_note( (note_num+9)%notes_per_octave, i );
+	piano_draw_note( (note_num+10)%notes_per_octave, i );
+      }
+      break;
+      
+      // Aeolian R-T-s-T-T-s-T-T
+    case 5:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+	piano_draw_note( (note_num+2)%notes_per_octave, i );
+	piano_draw_note( (note_num+3)%notes_per_octave, i );
+	piano_draw_note( (note_num+5)%notes_per_octave, i );
+	piano_draw_note( (note_num+7)%notes_per_octave, i );
+	piano_draw_note( (note_num+8)%notes_per_octave, i );
+	piano_draw_note( (note_num+10)%notes_per_octave, i );
+      }
+      break;
+      
+      // Locrian R-s-T-T-s-T-T-T
+    case 6:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+	piano_draw_note( (note_num+1)%notes_per_octave, i );
+	piano_draw_note( (note_num+3)%notes_per_octave, i );
+	piano_draw_note( (note_num+5)%notes_per_octave, i );
+	piano_draw_note( (note_num+6)%notes_per_octave, i );
+	piano_draw_note( (note_num+8)%notes_per_octave, i );
+	piano_draw_note( (note_num+10)%notes_per_octave, i );
+      }
+      break;
+
+      // Ascending Melodic Minor
+    case 7:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+	piano_draw_note( (note_num+2)%notes_per_octave, i );
+	piano_draw_note( (note_num+3)%notes_per_octave, i );
+	piano_draw_note( (note_num+5)%notes_per_octave, i );
+	piano_draw_note( (note_num+7)%notes_per_octave, i );
+	piano_draw_note( (note_num+9)%notes_per_octave, i );
+	piano_draw_note( (note_num+11)%notes_per_octave, i );
+      }
+      break;
+      
+      // Harmonic Minor R-T-s-T-T-s-(T+s)-s
+    case 8:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+	piano_draw_note( (note_num+2)%notes_per_octave, i );
+	piano_draw_note( (note_num+3)%notes_per_octave, i );
+	piano_draw_note( (note_num+5)%notes_per_octave, i );
+	piano_draw_note( (note_num+7)%notes_per_octave, i );
+	piano_draw_note( (note_num+8)%notes_per_octave, i );
+	piano_draw_note( (note_num+11)%notes_per_octave, i );
+      }
+      break;
+      
+      // Just the root note
+    case 9:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+      }
+      break;
+      
+      // Root and Fifth
+    case 10:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+	piano_draw_note( (note_num+7)%notes_per_octave, i );
+      }
+      break;
+                 
+      // Major Pentatonic R-M2-M3-P5-M6
+    case 11:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+	piano_draw_note( (note_num+2)%notes_per_octave, i );
+	piano_draw_note( (note_num+4)%notes_per_octave, i );
+	piano_draw_note( (note_num+7)%notes_per_octave, i );
+	piano_draw_note( (note_num+9)%notes_per_octave, i );
+      }
+      break;
+      
+      // Minor Pentatonic R-m3-P4-P5-m7
+    case 12:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+	piano_draw_note( (note_num+3)%notes_per_octave, i );
+	piano_draw_note( (note_num+5)%notes_per_octave, i );
+	piano_draw_note( (note_num+7)%notes_per_octave, i );
+	piano_draw_note( (note_num+10)%notes_per_octave, i );
+      }
+      break;
+      
+      // Chromatic.... all the notes!
+    case 13:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+	piano_draw_note( (note_num+1)%notes_per_octave, i );
+	piano_draw_note( (note_num+2)%notes_per_octave, i );
+	piano_draw_note( (note_num+3)%notes_per_octave, i );
+	piano_draw_note( (note_num+4)%notes_per_octave, i );
+	piano_draw_note( (note_num+5)%notes_per_octave, i );
+	piano_draw_note( (note_num+6)%notes_per_octave, i );
+	piano_draw_note( (note_num+7)%notes_per_octave, i );
+	piano_draw_note( (note_num+8)%notes_per_octave, i );
+	piano_draw_note( (note_num+9)%notes_per_octave, i );
+	piano_draw_note( (note_num+10)%notes_per_octave, i );
+	piano_draw_note( (note_num+11)%notes_per_octave, i );
+      }
+      break;
+      
+      // Phrygian Dominant R-s-(T+s)-T-T-s-T-T
+    case 14:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+	piano_draw_note( (note_num+1)%notes_per_octave, i );
+	piano_draw_note( (note_num+4)%notes_per_octave, i );
+	piano_draw_note( (note_num+5)%notes_per_octave, i );
+	piano_draw_note( (note_num+7)%notes_per_octave, i );
+	piano_draw_note( (note_num+8)%notes_per_octave, i );
+	piano_draw_note( (note_num+10)%notes_per_octave, i );
+      }
+      break;
+       
+      // Major Triad R-M3-P5
+    case 15:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+	piano_draw_note( (note_num+4)%notes_per_octave, i );
+	piano_draw_note( (note_num+7)%notes_per_octave, i );
+      }
+      break;
+      
+      // Major 6th
+    case 16:
+      for( var i=0; i<2; i++ ){
+        piano_draw_note( (note_num)%notes_per_octave, i );
+        piano_draw_note( (note_num+4)%notes_per_octave, i );
+        piano_draw_note( (note_num+7)%notes_per_octave, i );
+        piano_draw_note( (note_num+9)%notes_per_octave, i );
+      }
+      break;
+
+      // Dominant Seventh
+    case 17:
+      for( var i=0; i<2; i++ ){
+        piano_draw_note( (note_num)%notes_per_octave, i );
+        piano_draw_note( (note_num+4)%notes_per_octave, i );
+        piano_draw_note( (note_num+7)%notes_per_octave, i );
+        piano_draw_note( (note_num+10)%notes_per_octave, i );
+      }
+      break;
+      
+      // Major Seventh Chord
+    case 18:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+	piano_draw_note( (note_num+4)%notes_per_octave, i );
+	piano_draw_note( (note_num+7)%notes_per_octave, i );
+	piano_draw_note( (note_num+11)%notes_per_octave, i );
+      }
+      break;
+                  
+      // Minor Triad
+    case 19:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+	piano_draw_note( (note_num+3)%notes_per_octave, i );
+	piano_draw_note( (note_num+7)%notes_per_octave, i );
+      }
+      break;    
+
+      // Minor/Minor Seventh Chord
+    case 20:
+      for( var i=0; i<2; i++ ){
+	piano_draw_note( (note_num)%notes_per_octave, i );
+	piano_draw_note( (note_num+3)%notes_per_octave, i );
+	piano_draw_note( (note_num+7)%notes_per_octave, i );
+	piano_draw_note( (note_num+10)%notes_per_octave, i );
+      }
+      break;
+
+  } // end switch
+  
+} // end function
+
+
+
+function piano_clear_notes(){
+  piano_canvas.width = piano_canvas.width;
+  draw_piano_keys();
+}
+
+//*********************************************//
+//********** STRINGED CODE ********************//
+//*********************************************//
+
+// return first instance (in frets) of note on string
+function stringed_search_for_note( note_num, open_note ){
+  for( var i=0; i<=notes_per_octave*num_octaves; i++ ){
+    if( (open_note+i)%notes_per_octave == note_num ){
+      return i;
+    }
+  }
+}
+
+// draw a note on a string 
+// string_num goes from 1 to 6. string_num array starts at 0, so subtract 1.
+function stringed_draw_note( note_num, string_num, octave_num ){
+  sc.beginPath();
+  sc.arc( stringed_margin+stringed_note_xpos[stringed_search_for_note(note_num,open_notes[string_num-1])+octave_num*notes_per_octave],
+	  stringed_margin+((string_num-1)*string_offset),
+	  stringed_dot_radius,
+	  0,
+	  Math.PI*2,
+	  true );
+  sc.closePath();
+  sc.lineWidth = stringed_dot_radius/1.5;
+  sc.stroke();
+  sc.fillStyle = note_colors[note_num];
+  sc.fill();
+}
+
+
+function stringed_instrument_changed(){
+  
+  note = document.getElementById("note_select").selectedIndex;
+  scale = document.getElementById("scale_select").selectedIndex;
+  instrument = document.getElementById("stringed_instrument_select").selectedIndex;
+  
+  // ********************************************* //
+  // open notes array is read bottom string to top //
+  // ********************************************* //
+  switch( instrument ){
+    
+    // EADGBE tuning (bottom to top = EBGDAE)
+    case 0:
+      drawFrets = true;
+      num_strings = 6;
+      open_notes = [4,11,7,2,9,4]; 
+      string_offset = (stringed_canvas.height - 2*stringed_margin)/(num_strings); 
+      stringed_update_fretboard( 2 );
+      stringed_draw_scale( note, scale );
+      break;
+      
+      // DADGAD (read top to bottom)
+    case 1:
+      drawFrets = true;
+      num_strings = 6;
+      open_notes = [2,9,7,2,9,2];
+      string_offset = (stringed_canvas.height - 2*stringed_margin)/(num_strings); 
+      stringed_update_fretboard( 2 );
+      stringed_draw_scale( note, scale );
+      break;
+      
+      // DGDGBD (read top to bottom)
+    case 2:
+      drawFrets = true;
+      num_strings = 6;
+      open_notes = [2,11,7,2,7,2];
+      string_offset = (stringed_canvas.height - 2*stringed_margin)/(num_strings); 
+      stringed_update_fretboard( 2 );
+      stringed_draw_scale( note, scale );
+      break;
+      
+      // DADF#AD (read top to bottom)
+    case 3:
+      drawFrets = true;
+      num_strings = 6;
+      open_notes = [2,9,6,2,9,2];
+      string_offset = (stringed_canvas.height - 2*stringed_margin)/(num_strings); 
+      stringed_update_fretboard( 2 );
+      stringed_draw_scale( note, scale );
+      break;
+      
+      // 4-string bass EADG (read top to bottom)
+    case 4:
+      drawFrets = true;
+      num_strings = 4;
+      open_notes = [7,2,9,4];
+      string_offset = (stringed_canvas.height - 2*stringed_margin)/(num_strings); 
+      stringed_update_fretboard( 2 );
+      stringed_draw_scale( note, scale );
+      break;
+      
+      // 5-string bass BEADG (read top to bottom)
+    case 5:
+      drawFrets = true;
+      num_strings = 5;
+      open_notes = [7,2,9,4,11];
+      string_offset = (stringed_canvas.height - 2*stringed_margin)/(num_strings); 
+      stringed_update_fretboard( 2 );
+      stringed_draw_scale( note, scale );
+      break;
+      
+      // 4-string violin GDAE (read top to bottom)
+    case 6:
+      drawFrets = false;
+      num_strings = 4;
+      open_notes = [4,9,2,7];
+      string_offset = (stringed_canvas.height - 2*stringed_margin)/(num_strings); 
+      stringed_update_fretboard( 2 );
+      stringed_draw_scale( note, scale );
+      break;
+      
+      // 4-string ukulele GCEA (read top to bottom)
+    case 7:
+      drawFrets = true;
+      num_strings = 4;
+      open_notes = [9,4,0,7];
+      string_offset = (stringed_canvas.height - 2*stringed_margin)/(num_strings);
+      stringed_update_fretboard( 1 );
+      stringed_draw_scale( note, scale );
+      break;
+      
+  } // end switch
+  
+} // end function
+
+
+function stringed_draw_scale( note_num, scale_num ){
+  stringed_clear_notes();
+  
+  switch( scale_num ){
+    
+    // Ionian R-T-T-s-T-T-T-s
+    case 0:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+2)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+2)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+4)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+4)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+5)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+5)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+9)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+9)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+11)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+11)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	  stringed_draw_note( (note_num+2)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+4)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+5)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+9)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+11)%notes_per_octave, i, j );
+	} // end for octaves
+      } // end for strings
+      break;
+      
+      // Dorian R-T-s-T-T-T-s-T
+    case 1:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+2)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+2)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+3)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+3)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+5)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+5)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+9)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+9)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+10)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+10)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	  stringed_draw_note( (note_num+2)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+3)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+5)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+9)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+10)%notes_per_octave, i, j );
+	} //end for octaves
+      } //end for strings
+      break;
+      
+      // Phyrgian R-s-T-T-T-s-T-T
+    case 2:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+1)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+1)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+3)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+3)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+5)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+5)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+8)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+8)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+10)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+10)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	  stringed_draw_note( (note_num+1)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+3)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+5)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+8)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+10)%notes_per_octave, i, j );
+	} //end for octaves
+      } //end for strings
+      break;
+      
+      // Lydian R-T-T-T-s-T-T-s
+    case 3:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+2)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+2)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+4)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+4)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+6)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+6)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+9)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+9)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+11)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+11)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	  stringed_draw_note( (note_num+2)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+4)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+6)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+9)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+11)%notes_per_octave, i, j );
+	} //end for octaves
+      } //end for strings
+      break;
+      
+      // Mixolydian R-T-T-s-T-T-s-T
+    case 4:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+2)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+2)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+4)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+4)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+5)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+5)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+9)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+9)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+10)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+10)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	  stringed_draw_note( (note_num+2)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+4)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+5)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+9)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+10)%notes_per_octave, i, j );
+	} //end for octaves
+      } //end for strings
+      break;
+      
+      // Aeolian R-T-s-T-T-s-T-T
+    case 5:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+2)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+2)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+3)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+3)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+5)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+5)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+8)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+8)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+10)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+10)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	  stringed_draw_note( (note_num+2)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+3)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+5)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+8)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+10)%notes_per_octave, i, j );
+	} //end for octaves
+      } //end for strings
+      break;
+      
+      // Locrian R-s-T-T-s-T-T-T
+    case 6:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+1)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+1)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+3)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+3)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+5)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+5)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+6)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+6)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+8)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+8)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+10)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+10)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	  stringed_draw_note( (note_num+1)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+3)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+5)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+6)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+8)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+10)%notes_per_octave, i, j );
+	} //end for octaves
+      } //end for strings
+      break;
+      
+      // Ascending Melodic Minor
+    case 7:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+2)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+2)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+3)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+3)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+5)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+5)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+9)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+9)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+11)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+11)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	  stringed_draw_note( (note_num+2)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+3)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+5)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+9)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+11)%notes_per_octave, i, j );
+	} //end for octaves
+      } //end for strings
+      break;
+      
+      // Harmonic Minor R-T-s-T-T-s-(T+s)-s
+    case 8:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+2)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+2)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+3)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+3)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+5)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+5)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+8)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+8)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+11)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+11)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	  stringed_draw_note( (note_num+2)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+3)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+5)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+8)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+11)%notes_per_octave, i, j );;
+	} //end for octaves
+      } //end for strings
+      break;
+      
+      // Just the root note
+    case 9:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	} //end for octaves
+      } //end for strings
+      break;
+      
+      // Root and Fifth
+    case 10:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	  stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+	} //end for octaves
+      } //end for strings
+      break;
+            
+      // Major Pentatonic R-M2-M3-P5-M6
+    case 11:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+2)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+2)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+4)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+4)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+9)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+9)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	  stringed_draw_note( (note_num+2)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+4)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+9)%notes_per_octave, i, j );
+	} //end for octaves
+      } //end for strings
+      break;
+      
+      // Minor Pentatonic R-m3-P4-P5-m7
+    case 12:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+3)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+3)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+5)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+5)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+10)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+10)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	  stringed_draw_note( (note_num+3)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+5)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+10)%notes_per_octave, i, j );
+	} //end for octaves
+      } //end for strings
+      break;
+      
+      // Chromatic... all the notes!
+    case 13:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+1)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+1)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+2)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+2)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+3)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+3)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+4)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+4)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+5)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+5)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+6)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+6)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+8)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+8)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+9)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+9)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+10)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+10)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+11)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+11)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	  stringed_draw_note( (note_num+1)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+2)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+3)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+4)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+5)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+6)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+8)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+9)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+10)%notes_per_octave, i, j )
+	  stringed_draw_note( (note_num+11)%notes_per_octave, i, j );;
+	} //end for octaves
+      } //end for strings
+      break;
+      
+      // Phyrgian Dominant R-s-(T+s)-T-T-s-T-T
+    case 14:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+1)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+1)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+4)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+4)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+5)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+5)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+8)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+8)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+10)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+10)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	  stringed_draw_note( (note_num+1)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+4)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+5)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+8)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+10)%notes_per_octave, i, j );
+	} //end for octaves
+      } //end for strings
+      break;
+
+      // Major Triad R-M3-P5
+    case 15:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+4)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+4)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	  stringed_draw_note( (note_num+4)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+	} //end for octaves
+      } //end for strings
+      break;
+      
+      // Major 6th
+    case 16:
+      for( var i=1; i<=num_strings; i++ ){
+        if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+        if( (note_num+4)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+4)%notes_per_octave, i, num_octaves ); }
+        if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+        if( (note_num+9)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+9)%notes_per_octave, i, num_octaves ); }
+        for( var j=0; j<num_octaves; j++ ){
+          stringed_draw_note( note_num, i, j );
+          stringed_draw_note( (note_num+4)%notes_per_octave, i, j );
+          stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+          stringed_draw_note( (note_num+9)%notes_per_octave, i, j );
+        } //end for octaves
+      } //end for strings
+      break;
+
+      // Dominant Seventh
+    case 17:
+      for( var i=1; i<=num_strings; i++ ){
+        if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+        if( (note_num+4)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+4)%notes_per_octave, i, num_octaves ); }
+        if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+        if( (note_num+10)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+10)%notes_per_octave, i, num_octaves ); }
+        for( var j=0; j<num_octaves; j++ ){
+          stringed_draw_note( note_num, i, j );
+          stringed_draw_note( (note_num+4)%notes_per_octave, i, j );
+          stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+          stringed_draw_note( (note_num+10)%notes_per_octave, i, j );
+        } //end for octaves
+      } //end for strings
+      break;
+      
+      // Major Seventh Chord
+    case 18:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+4)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+4)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+11)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+11)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	  stringed_draw_note( (note_num+4)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+11)%notes_per_octave, i, j );
+	}                                                   //end for octaves
+      }                                                     //end for strings
+      break;
+         
+      // Minor Triad
+    case 19:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+3)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+3)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	  stringed_draw_note( (note_num+3)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+	} //end for octaves
+      } //end for strings
+      break;
+  
+      // Minor/Minor Seventh Chord
+    case 20:
+      for( var i=1; i<=num_strings; i++ ){
+	if( (note_num)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+3)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+3)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+7)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+7)%notes_per_octave, i, num_octaves ); }
+	if( (note_num+10)%notes_per_octave==open_notes[i-1] ){ stringed_draw_note( (note_num+10)%notes_per_octave, i, num_octaves ); }
+	for( var j=0; j<num_octaves; j++ ){
+	  stringed_draw_note( note_num, i, j );
+	  stringed_draw_note( (note_num+3)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+7)%notes_per_octave, i, j );
+	  stringed_draw_note( (note_num+10)%notes_per_octave, i, j );
+	}                                                   //end for octaves
+      }                                                     //end for strings
+      break;
+
+  } //end switch
+  
+} //end function
+
+function draw_stringed_strings(){
+  
+  sc.fillStyle = widget_bgcolor;
+  sc.beginPath();
+  sc.rect( 0, 0, stringed_canvas.width, stringed_canvas.height );
+  sc.closePath();
+  sc.fill();
+  
+  // draw frets but only if drawFrets is true
+  // it will be false for a violin for example
+  if( drawFrets ){
+    sc.lineCap = "round";
+    sc.lineWidth = stringed_dot_radius / 2;
+    sc.beginPath();
+    for( var i=0; i<=notes_per_octave*num_octaves; i++ ){
+      sc.moveTo(stringed_margin+stringed_fret_xpos_reverse[i], stringed_margin-fret_overhang);
+      sc.lineTo(stringed_margin+stringed_fret_xpos_reverse[i], stringed_margin+fret_overhang+string_offset*(num_strings-1));
+    }
+    sc.closePath();
+    sc.stroke();
+  }
+  else{
+    sc.lineCap = "round";
+    sc.lineWidth = stringed_dot_radius / 2;
+    sc.beginPath();
+    // just one fret at the end of the neck
+    sc.moveTo(stringed_margin+stringed_fret_xpos_reverse[notes_per_octave*num_octaves], stringed_margin-fret_overhang);
+    sc.lineTo(stringed_margin+stringed_fret_xpos_reverse[notes_per_octave*num_octaves], stringed_margin+fret_overhang+string_offset*(num_strings-1));
+    sc.closePath();
+    sc.stroke();
+  }
+  
+  // draw strings
+  for( var i=0; i<num_strings; i++ ){
+    sc.beginPath();
+    sc.lineWidth = stringed_dot_radius * (i+1) / num_strings;
+    sc.moveTo(0, stringed_margin+i*string_offset);
+    sc.lineTo(stringed_canvas.width, stringed_margin+i*string_offset);
+    sc.closePath();
+    sc.stroke();
+  } 
+  
+  // some fret locater dot
+  sc.fillStyle = "#000000";
+  var temp = 0;
+  for( var i=0; i<=notes_per_octave*num_octaves; i++ ){
+    temp = i%notes_per_octave; 
+    if( temp==0 ){
+      sc.beginPath();
+      sc.arc(stringed_margin+stringed_note_xpos[i]-locater_dots_offset,
+	     stringed_margin+num_strings*string_offset,
+	     locater_dots_radius,
+	     0,
+	     Math.PI*2,
+	     true);
+      sc.arc(stringed_margin+stringed_note_xpos[i]+locater_dots_offset,
+	     stringed_margin+num_strings*string_offset,
+	     locater_dots_radius,
+	     0,
+	     Math.PI*2,
+	     true);      
+      sc.closePath();
+      sc.fill();
+    }
+    if( temp==3||temp==5||temp==7||temp==9 ){
+      sc.beginPath();
+      sc.arc(stringed_margin+stringed_note_xpos[i],
+	     stringed_margin+((num_strings)*string_offset),
+	     locater_dots_radius,
+	     0,
+	     Math.PI*2,
+	     true);
+      sc.closePath();
+      sc.fill();
+    }
+  }
+  
+}
+
+
+// a function to update the fretboard after the instrument has changed
+function stringed_update_fretboard( octaves ){
+  if( num_octaves != octaves ){
+    num_octaves = octaves;
+    for( var i=0; i<=(notes_per_octave*num_octaves); i++ ){
+      stringed_fret_xpos_reverse[i] = fretboard_size - fretboard_size*(Math.pow(2,i/(notes_per_octave*num_octaves)) - 1);
+    }
+    
+    // fill x-axis note positions array - reverse order to fret_xpos_reverse (i.e. from head to body of instrument)
+    // stringed_note_xpos contains the x-axis positions of the notes (i.e. where the dots should be drawn)
+    for( var i=0; i<notes_per_octave*num_octaves; i++ ){
+      stringed_note_xpos[notes_per_octave*num_octaves-i] = stringed_fret_xpos_reverse[i] - ( (stringed_fret_xpos_reverse[i]-stringed_fret_xpos_reverse[i+1])/2 );
+    }
+    
+    // stringed_dot_radius must be smaller than smallest fret width
+    // AND it must be smaller than the distance between two strings (string_offset)
+    // whichever one is smallest
+    smallest_fret_size = stringed_fret_xpos_reverse[0] - stringed_fret_xpos_reverse[1];
+    if(smallest_fret_size < string_offset){
+      stringed_dot_radius = ( stringed_fret_xpos_reverse[0] - stringed_fret_xpos_reverse[1] ) / 3; // divide by 2 is too big a circle
+    }
+    else{
+      stringed_dot_radius = ( string_offset ) / 3; // divide by 2 is too big a circle
+    }
+    
+    // custom set the 0th fret (open string) - must be within stringed_margin
+    stringed_note_xpos[0] = -stringed_dot_radius - (stringed_dot_radius/2);
+    
+    // locater_dots_offset is for when two locater dots need to be drawn on the octaves
+    locater_dots_radius = stringed_dot_radius/1.5;
+    locater_dots_offset = locater_dots_radius;
+  } // end if num_octaves != octaves
+} // end function update_fretboard( octaves )
+
+
+function stringed_clear_notes(){
+  stringed_canvas.width = stringed_canvas.width;
+  draw_stringed_strings();
+}
+
+
+</script>
+
+</body>
+
+
+</html>
